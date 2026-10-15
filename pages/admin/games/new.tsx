@@ -1,0 +1,11 @@
+import AdminLayout from '../../../components/AdminLayout';
+import GameEditor from '../../../components/GameEditor';
+
+export default function NewGame() {
+  return (
+    <AdminLayout>
+      <h2 className="text-xl font-semibold mb-4">Create Game</h2>
+      <GameEditor />
+    </AdminLayout>
+  );
+}
