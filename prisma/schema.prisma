@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  password  String
+  name      String?
+  role      Role      @default(PLAYER)
+  balance   Float     @default(0)
+  status    UserStatus @default(ACTIVE)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+  sessions     GameSession[]
+}
+
+model Game {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  titleEn     String
+  titleBn     String
+  type        String
+  thumbnail   String?
+  config      Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model GameSession {
+  id        String   @id @default(cuid())
+  userId    String
+  gameId    String
+  amount    Float    @default(0)
+  status    String
+  result    Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  userId    String
+  type      TransactionType
+  amount    Float
+  status    TransactionStatus @default(PENDING)
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model AdminConfig {
+  id        Int   @id @default(1)
+  data      Json
+  updatedAt DateTime @updatedAt
+}
+
+enum Role {
+  PLAYER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+  SUSPENDED
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAW
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
