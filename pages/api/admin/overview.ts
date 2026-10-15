@@ -10,12 +10,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     prisma.game.count()
   ]);
 
-  const revenue = Number(txs._sum.amount ?? 0);
-
   return res.status(200).json({
     users,
     deposits: await prisma.transaction.count({ where: { type: 'DEPOSIT' } }),
-    revenue,
+    revenue: Number(txs._sum.amount ?? 0),
     games
   });
 }
