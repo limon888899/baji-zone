@@ -21,7 +21,7 @@ export function readSessionToken(token: string | undefined): string | null {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const [userId, expiresText, signature] = parts;
-  if (!userId || !/^\d+$/.test(expiresText) || !/^[a-f0-9]{64}$/.test(signature)) return null;
+  if (!userId || !/^[A-Za-z0-9_-]{1,128}$/.test(userId) || !/^\d+$/.test(expiresText) || !/^[a-f0-9]{64}$/.test(signature)) return null;
   if (Number(expiresText) <= Math.floor(Date.now() / 1000)) return null;
   try {
     const payload = `${userId}.${expiresText}`;
