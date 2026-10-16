@@ -15,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!process.env.STRIPE_SECRET_KEY || !process.env.NEXT_PUBLIC_BASE_URL) {
     return res.status(503).json({ message: 'Payments are not configured.' });
   }
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-08-16' });
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
   try {
     const transaction = await prisma.transaction.create({
       data: { userId: user.id, type: 'DEPOSIT', amount, status: 'PENDING', meta: { source: 'stripe' } }
