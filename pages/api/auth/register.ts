@@ -4,6 +4,7 @@ import prisma from '../../../lib/db';
 import cookie from 'cookie';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ success: false, message: 'Method not allowed' });
@@ -21,9 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const hash = await bcrypt.hash(password, 12);
-    const user = await prisma.user.create({
-      data: { email, password: hash, name: email.split('@')[0] }
-    });
+    const user = await prisma.user.create({ data: { email, password: hash, name: email.split('@')[0] } });
 
     res.setHeader('Set-Cookie', cookie.serialize('session', user.id, {
       httpOnly: true,
@@ -35,11 +34,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(201).json({ success: true, user: { id: user.id, email: user.email } });
   } catch (error) {
-    // Prisma P2002 means another request registered this email concurrently.
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002') {
       return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
     }
-    console.error('Registration failed:', error);
+    console.error('Registration failed');
     return res.status(500).json({ success: false, message: 'Unable to create account right now.' });
   }
 }
