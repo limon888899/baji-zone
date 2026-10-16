@@ -4,17 +4,20 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
-  const pw = await bcrypt.hash('admin123', 10);
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail) ||
+      !adminPassword || adminPassword.length < 12 || adminPassword.length > 128) {
+    throw new Error('Set ADMIN_EMAIL and a unique ADMIN_PASSWORD (12–128 characters) before running the seed script.');
+  }
 
+  const pw = await bcrypt.hash(adminPassword, 12);
   await prisma.user.upsert({
-    where: { email: 'admin@local.com' },
-    update: {},
+    where: { email: adminEmail },
+    update: { password: pw, role: 'ADMIN', status: 'ACTIVE' },
     create: {
-      email: 'admin@local.com',
-      password: pw,
-      name: 'Administrator',
-      role: 'ADMIN',
-      balance: 10000
+      email: adminEmail, password: pw, name: 'Administrator',
+      role: 'ADMIN', status: 'ACTIVE', balance: 0
     }
   });
 
@@ -31,16 +34,12 @@ async function main() {
     }
   });
 
-  // sample games
   await prisma.game.upsert({
     where: { slug: 'dice' },
     update: {},
     create: {
-      slug: 'dice',
-      titleEn: 'Lucky Dice',
-      titleBn: 'লাকি ডাইস',
-      type: 'dice',
-      config: { multiplier: 2.4, winChance: 0.35 }
+      slug: 'dice', titleEn: 'Lucky Dice', titleBn: 'লাকি ডাইস',
+      type: 'dice', config: { multiplier: 2.4, winChance: 0.35 }
     }
   });
 
@@ -48,11 +47,8 @@ async function main() {
     where: { slug: 'slots' },
     update: {},
     create: {
-      slug: 'slots',
-      titleEn: 'Classic Slots',
-      titleBn: 'ক্লাসিক স্লটস',
-      type: 'slots',
-      config: { reels: 3 }
+      slug: 'slots', titleEn: 'Classic Slots', titleBn: 'ক্লাসিক স্লটস',
+      type: 'slots', config: { reels: 3 }
     }
   });
 }
