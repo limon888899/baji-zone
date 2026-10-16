@@ -1,52 +1,60 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import Stripe from 'stripe';
-import prisma from '../../../lib/db';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2023-08-16' });
+import prisma from '../../../../lib/db';
 
 export const config = { api: { bodyParser: false } };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const buf = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: any[] = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return res.status(405).json({ message: 'Method not allowed' }); }
+  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
+    return res.status(503).json({ message: 'Stripe webhook is not configured.' });
+  }
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-08-16' });
+  let body: Buffer;
+  try {
+    body = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      req.on('end', () => resolve(Buffer.concat(chunks)));
+      req.on('error', reject);
+    });
+  } catch {
+    return res.status(400).json({ message: 'Unable to read webhook request.' });
+  }
 
-  const sig = req.headers['stripe-signature'] as string | undefined;
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
   let event: Stripe.Event;
   try {
-    if (!webhookSecret) {
-      // fallback - try to parse JSON
-      event = JSON.parse(buf.toString()) as Stripe.Event;
-    } else {
-      event = stripe.webhooks.constructEvent(buf, sig || '', webhookSecret);
+    const signature = req.headers['stripe-signature'];
+    if (typeof signature !== 'string') return res.status(400).json({ message: 'Missing Stripe signature.' });
+    event = stripe.webhooks.constructEvent(body, signature, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch {
+    return res.status(400).json({ message: 'Invalid Stripe webhook signature.' });
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    if (session.payment_status !== 'paid' || typeof session.id !== 'string') {
+      return res.status(200).json({ received: true });
     }
-  } catch (err) {
-    console.error('webhook signature error', err);
-    return res.status(400).send(`Webhook Error: ${err}`);
-  }
-
-  // Handle the event
-  switch (event.type) {
-    case 'payment_intent.succeeded':
-      const pi = event.data.object as Stripe.PaymentIntent;
-      const metaUser = pi.metadata?.userId;
-      // find transaction by meta
-      const tx = await prisma.transaction.findFirst({ where: { meta: { path: ['stripePI'], equals: pi.id } } } as any).catch(()=> null);
-      if (tx) {
-        await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'SUCCESS' } });
-        await prisma.user.update({ where: { id: tx.userId }, data: { balance: { increment: tx.amount } as any } });
+    try {
+      const tx = await prisma.transaction.findFirst({
+        where: { meta: { path: ['checkoutSessionId'], equals: session.id } }
+      } as any);
+      if (tx && tx.type === 'DEPOSIT' && tx.status === 'PENDING') {
+        await prisma.$transaction(async (db) => {
+          const changed = await db.transaction.updateMany({
+            where: { id: tx.id, status: 'PENDING', type: 'DEPOSIT' },
+            data: { status: 'SUCCESS' }
+          });
+          if (changed.count === 1) {
+            await db.user.update({ where: { id: tx.userId }, data: { balance: { increment: tx.amount } } });
+          }
+        });
       }
-      break;
-    case 'payment_intent.payment_failed':
-      // handle
-      break;
-    default:
-      console.log(`Unhandled event type ${event.type}`);
+    } catch {
+      return res.status(500).json({ message: 'Unable to process payment event.' });
+    }
   }
-
-  res.status(200).json({ received: true });
+  return res.status(200).json({ received: true });
 }
