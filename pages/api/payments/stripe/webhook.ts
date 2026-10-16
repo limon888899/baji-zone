@@ -6,10 +6,14 @@ export const config = { api: { bodyParser: false } };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   res.setHeader('Cache-Control', 'no-store');
-  if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return res.status(405).json({ message: 'Method not allowed' }); }
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ message: 'Method not allowed' });
+  }
   if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
     return res.status(503).json({ message: 'Stripe webhook is not configured.' });
   }
+
   const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
   let body: Buffer;
   try {
@@ -32,29 +36,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ message: 'Invalid Stripe webhook signature.' });
   }
 
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data.object as Stripe.Checkout.Session;
-    if (session.payment_status !== 'paid' || typeof session.id !== 'string') {
-      return res.status(200).json({ received: true });
-    }
-    try {
-      const tx = await prisma.transaction.findFirst({
-        where: { meta: { path: ['checkoutSessionId'], equals: session.id } }
-      } as any);
-      if (tx && tx.type === 'DEPOSIT' && tx.status === 'PENDING') {
-        await prisma.$transaction(async (db) => {
-          const changed = await db.transaction.updateMany({
-            where: { id: tx.id, status: 'PENDING', type: 'DEPOSIT' },
-            data: { status: 'SUCCESS' }
-          });
-          if (changed.count === 1) {
-            await db.user.update({ where: { id: tx.userId }, data: { balance: { increment: tx.amount } } });
-          }
-        });
+  if (event.type !== 'checkout.session.completed') {
+    return res.status(200).json({ received: true });
+  }
+
+  const session = event.data.object as Stripe.Checkout.Session;
+  if (session.payment_status !== 'paid') return res.status(200).json({ received: true });
+  const transactionId = session.metadata?.transactionId || session.client_reference_id;
+  const metadataUserId = session.metadata?.userId;
+  if (!transactionId || !metadataUserId || session.currency !== 'usd' || typeof session.amount_total !== 'number') {
+    return res.status(400).json({ message: 'Payment session metadata is invalid.' });
+  }
+
+  try {
+    await prisma.$transaction(async (db) => {
+      const tx = await db.transaction.findUnique({ where: { id: transactionId } });
+      if (!tx || tx.type !== 'DEPOSIT' || tx.userId !== metadataUserId) {
+        throw new Error('Payment transaction mismatch');
       }
-    } catch {
-      return res.status(500).json({ message: 'Unable to process payment event.' });
-    }
+      if (Math.round(tx.amount * 100) !== session.amount_total) {
+        throw new Error('Payment amount mismatch');
+      }
+      const changed = await db.transaction.updateMany({
+        where: { id: tx.id, status: 'PENDING', type: 'DEPOSIT' },
+        data: { status: 'SUCCESS', meta: { source: 'stripe', checkoutSessionId: session.id } }
+      });
+      if (changed.count === 1) {
+        await db.user.update({ where: { id: tx.userId }, data: { balance: { increment: tx.amount } } });
+      }
+    });
+  } catch {
+    return res.status(500).json({ message: 'Unable to process payment event.' });
   }
   return res.status(200).json({ received: true });
 }
