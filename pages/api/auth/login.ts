@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\\.[^\s@]+$/.test(email) || !password || password.length > 128) {
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !password || password.length > 128) {
     return res.status(400).json({ success: false, message: 'Enter a valid email and password.' });
   }
 
