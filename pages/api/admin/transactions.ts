@@ -37,14 +37,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!tx) return { error: 'NOT_FOUND' as const };
       if (tx.status !== 'PENDING') return { error: 'ALREADY_FINAL' as const, currentStatus: tx.status };
 
-      const updated = await db.transaction.update({
-        where: { id },
+      const changed = await db.transaction.updateMany({
+        where: { id, status: 'PENDING' },
         data: { status }
       });
+      if (changed.count !== 1) return { error: 'ALREADY_FINAL' as const, currentStatus: 'PROCESSED' };
+
       if (status === 'SUCCESS' && tx.type === 'DEPOSIT') {
         await db.user.update({ where: { id: tx.userId }, data: { balance: { increment: tx.amount } } });
       }
-      return { transaction: updated };
+      return { transaction: { ...tx, status } };
     });
 
     if ('error' in result && result.error === 'NOT_FOUND') return res.status(404).json({ message: 'Transaction not found.' });
