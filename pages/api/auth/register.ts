@@ -4,16 +4,42 @@ import prisma from '../../../lib/db';
 import cookie from 'cookie';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') return res.status(405).json({ message: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ success: false, message: 'Method not allowed' });
+  }
 
-  const { email, password } = req.body;
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) return res.status(400).json({ success: false, message: 'User exists' });
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ success: false, message: 'Enter a valid email address.' });
+  }
+  if (password.length < 8 || password.length > 128) {
+    return res.status(400).json({ success: false, message: 'Password must be 8–128 characters long.' });
+  }
 
-  const hash = await bcrypt.hash(password, 10);
-  const user = await prisma.user.create({ data: { email, password: hash, name: email.split('@')[0] } });
+  try {
+    const hash = await bcrypt.hash(password, 12);
+    const user = await prisma.user.create({
+      data: { email, password: hash, name: email.split('@')[0] }
+    });
 
-  res.setHeader('Set-Cookie', cookie.serialize('session', user.id, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 7 }));
-  return res.status(201).json({ success: true, user: { id: user.id, email: user.email } });
+    res.setHeader('Set-Cookie', cookie.serialize('session', user.id, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7
+    }));
+
+    return res.status(201).json({ success: true, user: { id: user.id, email: user.email } });
+  } catch (error) {
+    // Prisma P2002 means another request registered this email concurrently.
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002') {
+      return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+    }
+    console.error('Registration failed:', error);
+    return res.status(500).json({ success: false, message: 'Unable to create account right now.' });
+  }
 }
